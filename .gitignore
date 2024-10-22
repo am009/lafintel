@@ -1,3 +1,7 @@
+.idea/
+fuzzerlog.txt*
+out*/
+
 # Binaries produced by "make".
 afl-analyze
 afl-as

@@ -332,6 +332,32 @@ enum {
   /* 05 */ FAULT_NOBITS
 };
 
+/* FUZZERLOG: fuzzer log related */
+typedef void (*reset_chances_handle)();
+typedef void (*increase_chances_handle)();
+typedef void (*reset_mutator_names_handle)();
+typedef void (*add_mutator_name_handle)(char * mutator_name);
+typedef void (*log_new_seed_handle)(char * seed_name, char * kept_reason);
+typedef void (*reset_current_seed_name_handle)();
+typedef void (*set_current_seed_name_handle)(char * seed_name);
+typedef void (*set_splice_seed_name_handle)(char * seed_name);
+typedef void (*log_chances_handle)();
+typedef void (*fuzzer_logger_start_handle)();
+typedef void (*fuzzer_logger_end_handle)();
+
+reset_chances_handle reset_chances;
+increase_chances_handle increase_chances;
+reset_mutator_names_handle reset_mutator_names;
+add_mutator_name_handle add_mutator_name;
+log_new_seed_handle log_new_seed;
+reset_current_seed_name_handle reset_current_seed_name;
+set_current_seed_name_handle set_current_seed_name;
+set_splice_seed_name_handle set_splice_seed_name;
+log_chances_handle log_chances;
+fuzzer_logger_start_handle fuzzer_logger_start;
+fuzzer_logger_end_handle fuzzer_logger_end;
+
+void *fuzzer_log_lib;
 
 /* Get unix time in milliseconds */
 
@@ -3165,6 +3191,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^!SIMPLE_FILES */
 
     add_to_queue(fn, len, 0);
+    /* FUZZERLOG: log for new seed */
+    log_new_seed(fn, "new-cov");
 
     if (hnb == 2) {
       queue_top->has_new_cov = 1;
@@ -3251,6 +3279,9 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       unique_hangs++;
 
+      /* FUZZERLOG: log for new seed */
+      log_new_seed(fn, "new-hang");
+
       last_hang_time = get_cur_time();
 
       break;
@@ -3294,6 +3325,9 @@ keep_as_crash:
 #endif /* ^!SIMPLE_FILES */
 
       unique_crashes++;
+
+      /* FUZZERLOG: log for new seed */
+      log_new_seed(fn, "new-crash");
 
       last_crash_time = get_cur_time();
       last_crash_execs = total_execs;
@@ -4638,6 +4672,10 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
   fault = run_target(argv, exec_tmout);
 
+  /* FUZZERLOG: add one exec chance */
+  increase_chances();
+  // reset_mutator_names();
+
   if (stop_soon) return 1;
 
   if (fault == FAULT_TMOUT) {
@@ -4663,6 +4701,8 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
   /* This handles FAULT_ERROR for us: */
 
   queued_discovered += save_if_interesting(argv, out_buf, len, fault);
+
+  reset_mutator_names();
 
   if (!(stage_cur % stats_update_freq) || stage_cur + 1 == stage_max)
     show_stats();
@@ -5046,6 +5086,11 @@ static u8 fuzz_one(char** argv) {
 
   close(fd);
 
+  /* FUZZERLOG: log current seed */
+  reset_current_seed_name();
+  reset_chances();
+  set_current_seed_name(queue_cur->fname);
+
   /* We could mmap() out_buf as MAP_PRIVATE, but we end up clobbering every
      single byte anyway, so it wouldn't give us any performance or memory usage
      benefits. */
@@ -5155,6 +5200,9 @@ static u8 fuzz_one(char** argv) {
 
     FLIP_BIT(out_buf, stage_cur);
 
+    /* FUZZERLOG: log mutator name */
+    add_mutator_name("bitflip_1");
+
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
@@ -5248,6 +5296,9 @@ static u8 fuzz_one(char** argv) {
     FLIP_BIT(out_buf, stage_cur);
     FLIP_BIT(out_buf, stage_cur + 1);
 
+    /* FUZZERLOG: log mutator name */
+    add_mutator_name("bitflip_2");
+
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
@@ -5276,6 +5327,9 @@ static u8 fuzz_one(char** argv) {
     FLIP_BIT(out_buf, stage_cur + 1);
     FLIP_BIT(out_buf, stage_cur + 2);
     FLIP_BIT(out_buf, stage_cur + 3);
+
+    /* FUZZERLOG: log mutator name */
+    add_mutator_name("bitflip_4");
 
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
@@ -5328,6 +5382,9 @@ static u8 fuzz_one(char** argv) {
     stage_cur_byte = stage_cur;
 
     out_buf[stage_cur] ^= 0xFF;
+
+    /* FUZZERLOG: log mutator name */
+    add_mutator_name("bitflip_8");
 
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
@@ -5407,6 +5464,9 @@ static u8 fuzz_one(char** argv) {
 
     *(u16*)(out_buf + i) ^= 0xFFFF;
 
+    /* FUZZERLOG: log mutator name */
+    add_mutator_name("bitflip_16");
+
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
     stage_cur++;
 
@@ -5443,6 +5503,9 @@ static u8 fuzz_one(char** argv) {
     stage_cur_byte = i;
 
     *(u32*)(out_buf + i) ^= 0xFFFFFFFF;
+
+    /* FUZZERLOG: log mutator name */
+    add_mutator_name("bitflip_32");
 
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
     stage_cur++;
@@ -5500,6 +5563,9 @@ skip_bitflip:
         stage_cur_val = j;
         out_buf[i] = orig + j;
 
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_8_add");
+
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
 
@@ -5511,6 +5577,9 @@ skip_bitflip:
 
         stage_cur_val = -j;
         out_buf[i] = orig - j;
+
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_8_minus");
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
@@ -5571,6 +5640,9 @@ skip_bitflip:
         stage_cur_val = j;
         *(u16*)(out_buf + i) = orig + j;
 
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_16_le_add");
+
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
  
@@ -5580,6 +5652,9 @@ skip_bitflip:
 
         stage_cur_val = -j;
         *(u16*)(out_buf + i) = orig - j;
+
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_16_le_minus");
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
@@ -5596,6 +5671,9 @@ skip_bitflip:
         stage_cur_val = j;
         *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) + j);
 
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_16_be_add");
+
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
 
@@ -5605,6 +5683,9 @@ skip_bitflip:
 
         stage_cur_val = -j;
         *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) - j);
+
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_16_be_minus");
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
@@ -5664,6 +5745,9 @@ skip_bitflip:
         stage_cur_val = j;
         *(u32*)(out_buf + i) = orig + j;
 
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_32_le_add");
+
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
 
@@ -5673,6 +5757,9 @@ skip_bitflip:
 
         stage_cur_val = -j;
         *(u32*)(out_buf + i) = orig - j;
+
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_32_le_minus");
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
@@ -5688,6 +5775,9 @@ skip_bitflip:
         stage_cur_val = j;
         *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) + j);
 
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_32_be_add");
+
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
 
@@ -5697,6 +5787,9 @@ skip_bitflip:
 
         stage_cur_val = -j;
         *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) - j);
+
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("arith_32_be_minus");
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
@@ -5757,6 +5850,9 @@ skip_arith:
       stage_cur_val = interesting_8[j];
       out_buf[i] = interesting_8[j];
 
+      /* FUZZERLOG: log mutator name */
+      add_mutator_name("interesting_8");
+
       if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
       out_buf[i] = orig;
@@ -5810,6 +5906,9 @@ skip_arith:
 
         *(u16*)(out_buf + i) = interesting_16[j];
 
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("interesting_16_le");
+
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
 
@@ -5821,6 +5920,9 @@ skip_arith:
           !could_be_interest(orig, SWAP16(interesting_16[j]), 2, 1)) {
 
         stage_val_type = STAGE_VAL_BE;
+
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("interesting_16_be");
 
         *(u16*)(out_buf + i) = SWAP16(interesting_16[j]);
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
@@ -5877,6 +5979,9 @@ skip_arith:
 
         stage_val_type = STAGE_VAL_LE;
 
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("interesting_32_le");
+
         *(u32*)(out_buf + i) = interesting_32[j];
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
@@ -5890,6 +5995,9 @@ skip_arith:
           !could_be_interest(orig, SWAP32(interesting_32[j]), 4, 1)) {
 
         stage_val_type = STAGE_VAL_BE;
+
+        /* FUZZERLOG: log mutator name */
+        add_mutator_name("interesting_32_be");
 
         *(u32*)(out_buf + i) = SWAP32(interesting_32[j]);
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
@@ -5958,6 +6066,9 @@ skip_interest:
       last_len = extras[j].len;
       memcpy(out_buf + i, extras[j].data, last_len);
 
+      /* FUZZERLOG: log mutator name */
+      add_mutator_name("extra_rep");
+
       if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
       stage_cur++;
@@ -6001,6 +6112,9 @@ skip_interest:
 
       /* Copy tail */
       memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
+
+      /* FUZZERLOG: log mutator name */
+      add_mutator_name("extra_ins");
 
       if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len)) {
         ck_free(ex_tmp);
@@ -6058,6 +6172,9 @@ skip_user_extras:
       last_len = a_extras[j].len;
       memcpy(out_buf + i, a_extras[j].data, last_len);
 
+      /* FUZZERLOG: log mutator name */
+      add_mutator_name("auto_extra_rep");
+
       if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
       stage_cur++;
@@ -6111,6 +6228,9 @@ havoc_stage:
     stage_short = "splice";
     stage_max   = SPLICE_HAVOC * perf_score / havoc_div / 100;
 
+    /* FUZZERLOG: log splice operator */
+    add_mutator_name("splice");
+
   }
 
   if (stage_max < HAVOC_MIN) stage_max = HAVOC_MIN;
@@ -6136,12 +6256,18 @@ havoc_stage:
 
         case 0:
 
+          /* FUZZERLOG: add mutator name */
+          add_mutator_name("havoc_bitflip");
+
           /* Flip a single bit somewhere. Spooky! */
 
           FLIP_BIT(out_buf, UR(temp_len << 3));
           break;
 
-        case 1: 
+        case 1:
+
+          /* FUZZERLOG: add mutator name */
+          add_mutator_name("havoc_interesting_8");
 
           /* Set byte to interesting value. */
 
@@ -6156,10 +6282,16 @@ havoc_stage:
 
           if (UR(2)) {
 
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_interesting_16_le");
+
             *(u16*)(out_buf + UR(temp_len - 1)) =
               interesting_16[UR(sizeof(interesting_16) >> 1)];
 
           } else {
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_interesting_16_be");
 
             *(u16*)(out_buf + UR(temp_len - 1)) = SWAP16(
               interesting_16[UR(sizeof(interesting_16) >> 1)]);
@@ -6175,11 +6307,17 @@ havoc_stage:
           if (temp_len < 4) break;
 
           if (UR(2)) {
-  
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_interesting_32_le");
+
             *(u32*)(out_buf + UR(temp_len - 3)) =
               interesting_32[UR(sizeof(interesting_32) >> 2)];
 
           } else {
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_interesting_32_be");
 
             *(u32*)(out_buf + UR(temp_len - 3)) = SWAP32(
               interesting_32[UR(sizeof(interesting_32) >> 2)]);
@@ -6190,12 +6328,18 @@ havoc_stage:
 
         case 4:
 
+          /* FUZZERLOG: add mutator name */
+          add_mutator_name("havoc_arith_sub_8");
+
           /* Randomly subtract from byte. */
 
           out_buf[UR(temp_len)] -= 1 + UR(ARITH_MAX);
           break;
 
         case 5:
+
+          /* FUZZERLOG: add mutator name */
+          add_mutator_name("havoc_arith_add_8");
 
           /* Randomly add to byte. */
 
@@ -6210,11 +6354,17 @@ havoc_stage:
 
           if (UR(2)) {
 
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_sub_16_le");
+
             u32 pos = UR(temp_len - 1);
 
             *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
           } else {
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_sub_16_be");
 
             u32 pos = UR(temp_len - 1);
             u16 num = 1 + UR(ARITH_MAX);
@@ -6234,11 +6384,17 @@ havoc_stage:
 
           if (UR(2)) {
 
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_add_16_le");
+
             u32 pos = UR(temp_len - 1);
 
             *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
           } else {
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_add_16_be");
 
             u32 pos = UR(temp_len - 1);
             u16 num = 1 + UR(ARITH_MAX);
@@ -6258,11 +6414,17 @@ havoc_stage:
 
           if (UR(2)) {
 
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_sub_32_le");
+
             u32 pos = UR(temp_len - 3);
 
             *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
           } else {
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_sub_32_be");
 
             u32 pos = UR(temp_len - 3);
             u32 num = 1 + UR(ARITH_MAX);
@@ -6282,11 +6444,17 @@ havoc_stage:
 
           if (UR(2)) {
 
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_add_32_le");
+
             u32 pos = UR(temp_len - 3);
 
             *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
           } else {
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_arith_add_32_be");
 
             u32 pos = UR(temp_len - 3);
             u32 num = 1 + UR(ARITH_MAX);
@@ -6300,6 +6468,9 @@ havoc_stage:
 
         case 10:
 
+          /* FUZZERLOG: add mutator name */
+          add_mutator_name("havoc_rnd_8");
+
           /* Just set a random byte to a random value. Because,
              why not. We use XOR with 1-255 to eliminate the
              possibility of a no-op. */
@@ -6308,6 +6479,9 @@ havoc_stage:
           break;
 
         case 11 ... 12: {
+
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_del");
 
             /* Delete bytes. We're making this a bit more likely
                than insertion (the next option) in hopes of keeping
@@ -6343,11 +6517,15 @@ havoc_stage:
             u8* new_buf;
 
             if (actually_clone) {
+              /* FUZZERLOG: add mutator name */
+              add_mutator_name("havoc_clone");
 
               clone_len  = choose_block_len(temp_len);
               clone_from = UR(temp_len - clone_len + 1);
 
             } else {
+              /* FUZZERLOG: add mutator name */
+              add_mutator_name("havoc_ins");
 
               clone_len = choose_block_len(HAVOC_BLK_XL);
               clone_from = 0;
@@ -6383,6 +6561,8 @@ havoc_stage:
           break;
 
         case 14: {
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_rep");
 
             /* Overwrite bytes with a randomly selected chunk (75%) or fixed
                bytes (25%). */
@@ -6412,6 +6592,8 @@ havoc_stage:
            present in the dictionaries. */
 
         case 15: {
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_extra_rep");
 
             /* Overwrite bytes with an extra. */
 
@@ -6449,6 +6631,8 @@ havoc_stage:
           }
 
         case 16: {
+            /* FUZZERLOG: add mutator name */
+            add_mutator_name("havoc_extra_ins");
 
             u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
             u8* new_buf;
@@ -6593,6 +6777,9 @@ retry_splicing:
 
     fd = open(target->fname, O_RDONLY);
 
+    /* FUZZERLOG: log splicing parent name */
+    set_splice_seed_name(target->fname);
+
     if (fd < 0) PFATAL("Unable to open '%s'", target->fname);
 
     new_buf = ck_alloc_nozero(target->len);
@@ -6652,6 +6839,9 @@ abandon_entry:
   if (in_buf != orig_in) ck_free(in_buf);
   ck_free(out_buf);
   ck_free(eff_map);
+
+  /* FUZZERLOG: log chances given to the current seed */
+  log_chances();
 
   return ret_val;
 
@@ -8017,6 +8207,27 @@ int main(int argc, char** argv) {
   else
     use_argv = argv + optind;
 
+  /* FUZZERLOG: fuzzer log init */
+
+  fuzzer_log_lib = dlopen("/usr/local/lib/libfuzzerlog.so", RTLD_LAZY | RTLD_DEEPBIND);
+  if (fuzzer_log_lib == NULL) {
+    ABORT("fuzzer-log-lib: dlopen failed: %s", dlerror());
+  }
+
+  reset_chances = dlsym(fuzzer_log_lib, "reset_chances");
+  increase_chances = dlsym(fuzzer_log_lib, "increase_chances");
+  reset_mutator_names = dlsym(fuzzer_log_lib, "reset_mutator_names");
+  add_mutator_name = dlsym(fuzzer_log_lib, "add_mutator_name");
+  log_new_seed = dlsym(fuzzer_log_lib, "log_new_seed");
+  reset_current_seed_name = dlsym(fuzzer_log_lib, "reset_current_seed_name");
+  set_current_seed_name = dlsym(fuzzer_log_lib, "set_current_seed_name");
+  set_splice_seed_name = dlsym(fuzzer_log_lib, "set_splice_seed_name");
+  log_chances = dlsym(fuzzer_log_lib, "log_chances");
+  fuzzer_logger_start = dlsym(fuzzer_log_lib, "fuzzer_logger_start");
+  fuzzer_logger_end = dlsym(fuzzer_log_lib, "fuzzer_logger_end");
+
+  fuzzer_logger_start();
+
   perform_dry_run(use_argv);
 
   cull_queue();
@@ -8135,6 +8346,10 @@ stop_fuzzing:
   destroy_extras();
   ck_free(target_path);
   ck_free(sync_id);
+
+  /* FUZZERLOG: fuzzer log exit */
+  fuzzer_logger_end();
+  dlclose(fuzzer_log_lib);
 
   alloc_report();
 
